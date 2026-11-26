@@ -1,0 +1,34 @@
+name = "pdf-ai-worker"
+main = "worker/index.ts"
+compatibility_date = "2024-09-01"
+
+[vars]
+APP_URL = "https://your-domain.com"
+MAIL_FROM = "Your App <login@your-domain.com>"
+EMAIL_VERIFICATION_ENABLED = "false" # Keep false until email verification is intentionally enabled.
+AI_API_URL = "https://api.anthropic.com/v1/messages"
+AI_MODEL = "claude-sonnet-4-5"
+AI_ENABLED = "false"
+AGENT_ENABLED = "false"
+AI_PROVIDER = "anthropic"
+AI_REQUEST_TIMEOUT_MS = "40000"
+AI_MAX_OUTPUT_TOKENS = "4096"
+AI_SUPPORTED_CAPABILITIES = "chat,documents,agent,tool-calling"
+TRANSLATION_ENABLED = "false" # Enable only after setting AI_API_KEY and reviewing translation privacy notice.
+STRIPE_PRICE_ID = "price_REPLACE"
+ZARINPAL_AMOUNT_IRR = "500000"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "REPLACE_WITH_KV_ID"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "pdf-ai"
+database_id = "REPLACE_WITH_D1_ID"
+migrations_dir = "worker/migrations"
+
+# مسیر /api/* باید روی همان دامنه سایت به Worker وصل شود (Routes در داشبورد Cloudflare)
+
+[triggers]
+crons = ["0 3 * * *"]

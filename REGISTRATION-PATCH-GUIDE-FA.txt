@@ -1,0 +1,32 @@
+راهنمای نصب Patch ثبت‌نام و ایجاد حساب
+
+این بسته، کل پروژه نیست؛ فقط فایل‌هایی را شامل می‌شود که برای افزودن رابط ثبت‌نام و ورود با کد یک‌بارمصرف ایمیل تغییر کرده‌اند.
+
+روش نصب:
+1) از پوشه فعلی پروژه یک نسخه پشتیبان تهیه کنید.
+2) محتوای این ZIP را مستقیماً در ریشه پروژه استخراج کنید؛ همان پوشه‌ای که package.json در آن قرار دارد.
+3) هنگام پرسش ویندوز، گزینه Replace the files in the destination را انتخاب کنید.
+4) در PowerShell از ریشه پروژه اجرا کنید: npm run build
+5) سپس برای اجرای تست اختصاصی: npm run test:auth-registration
+
+فایل‌های جایگزین‌شونده:
+- README.md
+- package.json
+- src/core/i18n.js و i18n.ts
+- src/ui/Account.js و Account.tsx
+- src/ui/App.js و App.tsx
+- src/ui/styles.css
+- worker/index.ts
+
+فایل‌های جدید:
+- tests/auth_registration_ui_check.py
+- ACCOUNT-REGISTRATION-REPORT-FA.md
+
+نکته مهم:
+این Patch برای نسخه قبلی PDF-AI-Tools-Phase5-Secured-Fixed-v2 تهیه شده است. در آن نسخه جدول auth_challenges و migration شماره 0006 از قبل وجود داشتند؛ بنابراین این بسته آن‌ها را جایگزین نمی‌کند. اگر نسخه پایه شما قدیمی‌تر است، پیش از نصب بررسی کنید که worker/migrations/0006_auth_challenges.sql و جدول auth_challenges در worker/schema.sql موجود باشند.
+
+ثبت‌نام با گذرواژه نیست: کاربر ایمیل را وارد می‌کند، کد یک‌بارمصرف دریافت می‌کند و پس از تأیید کد، اگر حسابی برای آن ایمیل وجود نداشته باشد، Worker حساب را ایجاد می‌کند.
+
+برای ارسال ایمیل در محیط واقعی باید Worker مستقر باشد و مقادیر RESEND_API_KEY، MAIL_FROM و JWT_SECRET در تنظیمات امن Worker ثبت شده باشند. برای دیتابیس D1 قدیمی، migration شماره 0006_auth_challenges.sql باید اعمال شود. این ZIP به‌تنهایی تنظیمات سرویس ایمیل یا Deploy کردن Worker را انجام نمی‌دهد.
+
+اعتبارسنجی انجام‌شده برای این بسته: تست اختصاصی ثبت‌نام و بررسی نحوی فایل‌های JavaScript موفق بوده‌اند. Build کامل Production در این محیط اجرا نشده است؛ پس بعد از نصب حتماً npm run build را در سیستم خود اجرا کنید.

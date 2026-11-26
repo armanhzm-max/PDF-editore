@@ -1,0 +1,76 @@
+import type { Tool } from "../core/types";
+
+// آیکون‌های خطی ۲۴ پیکسلی. نام ابزارها = id ابزار؛ برای ابزار جدید اگر آیکون نداشت از آیکون دسته استفاده می‌شود.
+const P: Record<string, string> = {
+  // ابزارها
+  "pdf-merge": "M4 4h7v7H4z M13 4h7v7h-7z M12 14v6 M9 17l3 3 3-3",
+  "pdf-split": "M9 3h6v6H9z M12 9v4 M12 13l-5 4 M12 13l5 4 M4 17h6v4H4z M14 17h6v4h-6z",
+  "pdf-compress": "M4 9h5V4 M20 9h-5V4 M4 15h5v5 M20 15h-5v5",
+  "image-convert": "M4 5h16v14H4z M4 16l5-5 4 4 3-3 4 4 M8.5 9h.01",
+  "images-to-pdf": "M6 3h8l4 4v14H6z M14 3v4h4 M9 17l2.5-3 2 2 1.5-1.5 2 2.5",
+  "ocr": "M4 8V5a1 1 0 0 1 1-1h3 M16 4h3a1 1 0 0 1 1 1v3 M20 16v3a1 1 0 0 1-1 1h-3 M8 20H5a1 1 0 0 1-1-1v-3 M8 10h8 M8 14h5",
+  "pdf-summarize": "M4 6h9 M4 11h6 M4 16h5 M18 4l1.2 2.8L22 8l-2.8 1.2L18 12l-1.2-2.8L14 8l2.8-1.2z",
+  // دسته‌ها
+  pdf: "M6 3h8l4 4v14H6z M14 3v4h4",
+  image: "M4 5h16v14H4z M4 16l5-5 4 4 3-3 4 4 M8.5 9h.01",
+  ai: "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z M18 16l.8 2.2L21 19l-2.2.8L18 22l-.8-2.2L15 19l2.2-.8z",
+  library: "M4 4h16v16H4z M8 8h8 M8 12h8 M8 16h5 M2 7v13h16",
+  "folder-open": "M3 6h7l2 2h9v10H3z M3 10h18 M8 14h4",
+  files: "M3 7a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z",
+  // رابط
+  tools: "M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z",
+  assistant: "M4 5h16v11H9l-5 4z M9 10.5h.01 M12 10.5h.01 M15 10.5h.01",
+  about: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M12 11v5 M12 8h.01",
+  user: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M4 20a8 8 0 0 1 16 0",
+  logout: "M9 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h4 M16 8l4 4-4 4 M20 12H9",
+  globe: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z M3 12h18 M12 3c3 3 3 15 0 18 M12 3c-3 3-3 15 0 18",
+  languages: "M4 5h10 M9 3v2 M6 5c.5 3 2.5 5.5 5 7 M11 5c-.7 3-2.7 5.5-5 7 M4 12l3-3 M14 19l3-7 3 7 M15.2 16h3.6",
+  "arrow-left-right": "M4 8h15 M15 4l4 4-4 4 M20 16H5 M9 12l-4 4 4 4",
+  loader: "M12 3a9 9 0 0 1 9 9",
+  download: "M12 4v11 M7 11l5 5 5-5 M5 20h14",
+  upload: "M12 16V5 M7 9l5-5 5 5 M5 20h14",
+  trash: "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13 M10 11v6 M14 11v6",
+  plus: "M12 5v14 M5 12h14",
+  send: "M21 3L3 11l7 3 3 7z M10 14l11-11",
+  check: "M5 12.5l4.5 4.5L19 7.5",
+  shield: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z M9 12l2 2 4-4",
+  crown: "M4 8l4 4 4-6 4 6 4-4-2 11H6z",
+  device: "M3 5h18v11H3z M8 20h8 M12 16v4",
+  card: "M3 6h18v12H3z M3 10h18",
+  lock: "M6 11h12v9H6z M8 11V8a4 4 0 0 1 8 0v3",
+  message: "M4 5h16v12H9l-5 4z M8 9h8 M8 13h5",
+  "chevron-up": "M5 15l7-7 7 7",
+  "chevron-down": "M5 9l7 7 7-7",
+  "file-pdf": "M6 3h8l4 4v14H6z M14 3v4h4 M8 15h8 M8 18h5",
+  feedback: "M4 5h16v12H9l-5 4z M8 9h8 M8 13h5",
+  editor: "M4 4h16v16H4z M8 8h8 M8 12h8 M8 16h5",
+  word: "M5 3h10l4 4v14H5z M15 3v4h4 M8 11h8 M8 15h8 M8 18h5",
+  excel: "M4 4h16v16H4z M4 9h16 M9 4v16 M14 4v16 M4 14h16",
+  ppt: "M4 4h16v16H4z M8 8h8 M8 12h5 M8 16h8 M15 8v8",
+  powerpoint: "M4 4h16v16H4z M8 8h8 M8 12h5 M8 16h8 M15 8v8",
+  search: "M10.5 3a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15z M16 16l5 5",
+  "file-check": "M6 3h8l4 4v14H6z M14 3v4h4 M8 14l2.5 2.5L16 11",
+  scan: "M4 8V5a1 1 0 0 1 1-1h3 M16 4h3a1 1 0 0 1 1 1v3 M20 16v3a1 1 0 0 1-1 1h-3 M8 20H5a1 1 0 0 1-1-1v-3 M8 12h8 M12 8v8",
+  "rotate-cw": "M20 7v5h-5 M20 12a8 8 0 1 1-2.3-5.7L20 9",
+  images: "M4 5h13v12H4z M7 14l3-3 2 2 2-2 3 4 M8 8h.01 M8 19h12V8",
+  info: "M12 11v5 M12 8h.01 M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z",
+  brain: "M9 4a3 3 0 0 0-3 3 3 3 0 0 0-1 5.7A3.5 3.5 0 0 0 8 19h1 M15 4a3 3 0 0 1 3 3 3 3 0 0 1 1 5.7A3.5 3.5 0 0 1 16 19h-1 M12 3v18 M8 8c2 0 3 1 3 3 M16 8c-2 0-3 1-3 3 M8 15c2 0 3 1 3 3 M16 15c-2 0-3 1-3 3",
+  "file-text": "M6 3h8l4 4v14H6z M14 3v4h4 M9 11h6 M9 15h6 M9 18h4",
+  "file-spreadsheet": "M6 3h8l4 4v14H6z M14 3v4h4 M9 11h7 M9 15h7 M12 11v8 M9 18h7",
+  "file-presentation": "M6 3h8l4 4v14H6z M14 3v4h4 M9 12h6 M12 12v6 M10 18h4",
+  "alert-triangle": "M12 3L2.8 20h18.4L12 3z M12 9v5 M12 17h.01",
+  copy: "M8 8h11v13H8z M5 16H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1",
+  sun: "M12 3v2 M12 19v2 M3 12h2 M19 12h2 M5.64 5.64l1.42 1.42 M16.94 16.94l1.42 1.42 M18.36 5.64l-1.42 1.42 M7.06 16.94l-1.42 1.42 M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0z",
+  moon: "M20.8 14.2A8.5 8.5 0 0 1 9.8 3.2 8.8 8.8 0 1 0 20.8 14.2z",
+};
+
+export const toolIcon = (t: Tool) => (P[t.id] ? t.id : t.category);
+
+export function Icon({ name, size = 20 }: { name: string; size?: number }) {
+  return (
+    <svg className="ico" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={P[name] ?? P.files} />
+    </svg>
+  );
+}
