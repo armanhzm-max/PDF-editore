@@ -1,47 +1,145 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, setToken } from "../core/permissions";
 import { Icon } from "./icons";
 import { getPlanLimits } from "../core/entitlements.js";
 const errMsg = (t, e) => t("err." + e.message);
+// Network failures surface as TypeError ("Failed to fetch"); unknown codes fall back to a friendly message.
+function humanError(t, error) {
+    const code = error instanceof Error ? error.message : "";
+    if (error instanceof TypeError || /fetch|network/i.test(code))
+        return t("err.network_unreachable");
+    const mapped = t("err." + code);
+    return mapped !== "err." + code ? mapped : t("authGenericError");
+}
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const countChars = (value) => Array.from(value).length;
+const STRENGTH_KEYS = ["strengthWeak", "strengthWeak", "strengthFair", "strengthGood", "strengthStrong"];
+// 0 = too short/empty · 4 = strongest. Guidance only; the server keeps enforcing 12–128 characters.
+function passwordScore(value) {
+    const length = countChars(value);
+    if (!value || length < 12)
+        return 0;
+    let score = 1;
+    if (/[a-z]/.test(value) && /[A-Z]/.test(value))
+        score += 1;
+    if (/\d/.test(value))
+        score += 1;
+    if (/[^\w\s]/.test(value) || length >= 16)
+        score += 1;
+    return Math.min(score, 4);
+}
 export function AuthForm({ t, onDone, mode, onModeChange, onClose, }) {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
     const [showPassword, setShowPassword] = useState(false);
     const [busy, setBusy] = useState(false);
-    const [msg, setMsg] = useState("");
-    const validEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim());
-    const validPassword = Array.from(password).length >= 12 && Array.from(password).length <= 128;
+    const [submitted, setSubmitted] = useState(false);
+    const [touched, setTouched] = useState({});
+    const [capsLock, setCapsLock] = useState(false);
+    const [msg, setMsg] = useState(null);
+    const emailRef = useRef(null);
+    const passwordRef = useRef(null);
+    const cardRef = useRef(null);
+    const closeRef = useRef(onClose);
+    closeRef.current = onClose;
+    const emailValue = email.trim();
+    const emailError = !emailValue ? t("authEmailRequired") : !EMAIL_PATTERN.test(emailValue) ? t("authInvalidEmail") : "";
+    const passwordLength = countChars(password);
+    const passwordError = !password ? t("passwordRequired") : passwordLength < 12 ? t("passwordTooShort") : passwordLength > 128 ? t("passwordTooLong") : "";
+    const confirmError = password !== confirmPassword ? t("passwordMismatch") : "";
+    const showEmailError = (submitted || touched.email) && !!emailError;
+    const showPasswordError = (submitted || touched.password) && !!passwordError;
+    const showConfirmError = (submitted || touched.confirm) && !!confirmError;
+    const formValid = !emailError && !passwordError && (mode !== "register" || !confirmError);
+    const strength = passwordScore(password);
+    // ESC closes the dialog, Tab stays inside it, and background scrolling is locked while open.
+    useEffect(() => {
+        const onKey = (event) => {
+            if (event.key === "Escape") {
+                closeRef.current();
+                return;
+            }
+            if (event.key !== "Tab")
+                return;
+            const root = cardRef.current;
+            if (!root)
+                return;
+            const focusable = Array.from(root.querySelectorAll("button:not(:disabled), input:not(:disabled), a[href], [tabindex]:not([tabindex='-1'])"))
+                .filter((element) => element.offsetParent !== null || element === document.activeElement);
+            if (!focusable.length)
+                return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            const active = document.activeElement;
+            if (!active || !root.contains(active)) {
+                event.preventDefault();
+                first.focus();
+                return;
+            }
+            if (event.shiftKey && active === first) {
+                event.preventDefault();
+                last.focus();
+            }
+            else if (!event.shiftKey && active === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+        document.addEventListener("keydown", onKey);
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = previousOverflow; };
+    }, []);
+    function markTouched(field) { setTouched((current) => ({ ...current, [field]: true })); }
     function changeMode(next) {
+        if (next === mode || busy)
+            return;
         onModeChange(next);
         setPassword("");
         setConfirmPassword("");
-        setMsg("");
+        setShowPassword(false);
+        setCapsLock(false);
+        setMsg(null);
+        setSubmitted(false);
+        setTouched({});
     }
     async function submit() {
-        if (!validEmail || !validPassword || busy)
+        if (busy)
             return;
-        if (mode === "register" && password !== confirmPassword) {
-            setMsg(t("passwordMismatch"));
+        setSubmitted(true);
+        if (!formValid) {
+            setMsg(null);
+            if (emailError)
+                emailRef.current?.focus();
+            else
+                passwordRef.current?.focus();
             return;
         }
         setBusy(true);
-        setMsg("");
+        setMsg(null);
         try {
             const path = mode === "register" ? "/api/auth/register" : "/api/auth/login";
-            const result = await api(path, { email: email.trim().toLowerCase(), password });
+            const result = await api(path, { email: emailValue.toLowerCase(), password });
             setToken(result.token);
             onDone();
         }
         catch (error) {
-            setMsg(errMsg(t, error));
+            const code = error instanceof Error ? error.message : "";
+            setMsg({ tone: "error", text: humanError(t, error), code });
+            if (code === "invalid_credentials") {
+                setPassword("");
+                setConfirmPassword("");
+                window.setTimeout(() => passwordRef.current?.focus(), 0);
+            }
         }
         finally {
             setBusy(false);
         }
     }
-    return (_jsxs("section", { className: "auth-card", "aria-labelledby": "auth-title", children: [_jsxs("div", { className: "auth-card-heading", children: [_jsxs("div", { children: [_jsx("h2", { id: "auth-title", children: t(mode === "register" ? "authRegisterTitle" : "authLoginTitle") }), _jsx("p", { children: t(mode === "register" ? "authRegisterHint" : "authLoginHint") })] }), _jsx("button", { type: "button", className: "auth-close", onClick: onClose, "aria-label": t("close"), children: "\u00D7" })] }), _jsxs("form", { className: "auth-form", onSubmit: (event) => { event.preventDefault(); void submit(); }, children: [_jsxs("label", { className: "field", children: [_jsx("span", { children: t("email") }), _jsx("input", { type: "email", name: "email", autoComplete: "email", maxLength: 120, placeholder: t("email"), value: email, onChange: (event) => setEmail(event.target.value), dir: "ltr", required: true, disabled: busy })] }), _jsxs("label", { className: "field", children: [_jsx("span", { children: t("password") }), _jsx("input", { type: showPassword ? "text" : "password", name: "password", autoComplete: mode === "register" ? "new-password" : "current-password", minLength: 12, maxLength: 128, value: password, onChange: (event) => setPassword(event.target.value), dir: "ltr", required: true, disabled: busy })] }), mode === "register" && _jsxs("label", { className: "field", children: [_jsx("span", { children: t("confirmPassword") }), _jsx("input", { type: showPassword ? "text" : "password", name: "confirm-password", autoComplete: "new-password", minLength: 12, maxLength: 128, value: confirmPassword, onChange: (event) => setConfirmPassword(event.target.value), dir: "ltr", required: true, disabled: busy })] }), _jsx("button", { type: "button", className: "link auth-password-toggle", onClick: () => setShowPassword((value) => !value), disabled: busy, children: t(showPassword ? "hidePassword" : "showPassword") }), mode === "register" && _jsx("p", { className: "auth-verification-note", children: t("authUnverifiedSignupNote") }), _jsx("button", { className: "primary", type: "submit", disabled: busy || !validEmail || !validPassword || (mode === "register" && password !== confirmPassword), children: busy ? t("processing") : t(mode === "register" ? "createAccount" : "login") })] }), msg && _jsx("p", { className: "auth-message", role: "status", "aria-live": "polite", children: msg }), _jsx("div", { className: "auth-mode-switch", children: mode === "register" ? _jsxs(_Fragment, { children: [_jsx("span", { children: t("haveAccount") }), _jsx("button", { type: "button", className: "link", onClick: () => changeMode("login"), children: t("login") })] }) : _jsxs(_Fragment, { children: [_jsx("span", { children: t("noAccount") }), _jsx("button", { type: "button", className: "link", onClick: () => changeMode("register"), children: t("createAccount") })] }) }), _jsxs("small", { className: "muted", children: [t("consent"), " ", _jsx("a", { href: "#terms", children: t("termsLink") }), " \u00B7 ", _jsx("a", { href: "#privacy", children: t("privacyLink") })] })] }));
+    return (_jsx("div", { className: "auth-overlay", onClick: (event) => { if (event.target === event.currentTarget)
+            onClose(); }, children: _jsxs("section", { className: "auth-card", role: "dialog", "aria-modal": "true", "aria-labelledby": "auth-title", ref: cardRef, onClick: (event) => event.stopPropagation(), children: [_jsx("button", { type: "button", className: "auth-close", onClick: onClose, "aria-label": t("close"), title: t("close"), children: "\u00D7" }), _jsxs("header", { className: "auth-card-heading", children: [_jsx("span", { className: "auth-brand", "aria-hidden": "true", children: _jsx("img", { src: "/favicon.svg", alt: "", width: "26", height: "26" }) }), _jsx("h2", { id: "auth-title", children: t(mode === "register" ? "authRegisterTitle" : "authLoginTitle") }), _jsx("p", { children: t(mode === "register" ? "authRegisterHint" : "authLoginHint") })] }), _jsxs("div", { className: "auth-tabs", role: "tablist", "aria-label": t("authTabsLabel"), children: [_jsx("button", { type: "button", role: "tab", id: "auth-tab-login", "aria-controls": "auth-panel", "aria-selected": mode === "login", className: mode === "login" ? "active" : "", onClick: () => changeMode("login"), disabled: busy, children: t("login") }), _jsx("button", { type: "button", role: "tab", id: "auth-tab-register", "aria-controls": "auth-panel", "aria-selected": mode === "register", className: mode === "register" ? "active" : "", onClick: () => changeMode("register"), disabled: busy, children: t("createAccount") })] }), _jsxs("form", { id: "auth-panel", className: "auth-form", role: "tabpanel", "aria-labelledby": mode === "login" ? "auth-tab-login" : "auth-tab-register", noValidate: true, onSubmit: (event) => { event.preventDefault(); void submit(); }, children: [_jsxs("label", { className: "field auth-field", "data-invalid": showEmailError || undefined, children: [_jsx("span", { className: "auth-field-label", children: t("email") }), _jsxs("span", { className: "auth-input-wrap", children: [_jsx("span", { className: "auth-input-icon", "aria-hidden": "true", children: _jsx(Icon, { name: "mail", size: 17 }) }), _jsx("input", { ref: emailRef, type: "email", name: "email", autoComplete: "email", maxLength: 120, placeholder: "name@example.com", value: email, autoFocus: true, disabled: busy, dir: "ltr", required: true, "aria-invalid": showEmailError || undefined, onChange: (event) => { setEmail(event.target.value); setMsg(null); }, onBlur: () => markTouched("email") })] }), showEmailError && _jsxs("span", { className: "auth-field-error", children: [_jsx(Icon, { name: "alert-triangle", size: 13 }), emailError] })] }), _jsxs("label", { className: "field auth-field", "data-invalid": showPasswordError || undefined, children: [_jsx("span", { className: "auth-field-label", children: t("password") }), _jsxs("span", { className: "auth-input-wrap", children: [_jsx("span", { className: "auth-input-icon", "aria-hidden": "true", children: _jsx(Icon, { name: "lock", size: 17 }) }), _jsx("input", { ref: passwordRef, type: showPassword ? "text" : "password", name: "password", autoComplete: mode === "register" ? "new-password" : "current-password", minLength: 12, maxLength: 128, value: password, dir: "ltr", disabled: busy, required: true, "aria-invalid": showPasswordError || undefined, onChange: (event) => { setPassword(event.target.value); setMsg(null); }, onKeyUp: (event) => setCapsLock(event.getModifierState("CapsLock")), onBlur: () => { markTouched("password"); setCapsLock(false); } }), _jsx("button", { type: "button", className: "auth-eye", onClick: () => setShowPassword((value) => !value), disabled: busy, "aria-label": t(showPassword ? "hidePassword" : "showPassword"), title: t(showPassword ? "hidePassword" : "showPassword"), children: _jsx(Icon, { name: showPassword ? "eye-off" : "eye", size: 17 }) })] }), capsLock && _jsxs("span", { className: "auth-caps", children: [_jsx(Icon, { name: "alert-triangle", size: 13 }), t("capsLockOn")] }), mode === "register" && _jsx("span", { className: "auth-hint", children: t("passwordRequirement") }), showPasswordError && _jsxs("span", { className: "auth-field-error", children: [_jsx(Icon, { name: "alert-triangle", size: 13 }), passwordError] })] }), mode === "register" && password && (_jsxs("div", { className: "auth-strength", "data-level": strength, children: [_jsxs("div", { className: "auth-strength-bars", "aria-hidden": "true", children: [_jsx("i", {}), _jsx("i", {}), _jsx("i", {}), _jsx("i", {})] }), _jsxs("span", { className: "auth-strength-label", children: [t("passwordStrength"), ": ", _jsx("strong", { children: t(STRENGTH_KEYS[strength]) })] })] })), mode === "register" && (_jsxs("label", { className: "field auth-field", "data-invalid": showConfirmError || undefined, children: [_jsx("span", { className: "auth-field-label", children: t("confirmPassword") }), _jsxs("span", { className: "auth-input-wrap", children: [_jsx("span", { className: "auth-input-icon", "aria-hidden": "true", children: _jsx(Icon, { name: "lock", size: 17 }) }), _jsx("input", { type: showPassword ? "text" : "password", name: "confirm-password", autoComplete: "new-password", minLength: 12, maxLength: 128, value: confirmPassword, dir: "ltr", disabled: busy, required: true, "aria-invalid": showConfirmError || undefined, onChange: (event) => { setConfirmPassword(event.target.value); setMsg(null); }, onBlur: () => markTouched("confirm") }), confirmPassword && !confirmError && _jsx("span", { className: "auth-input-ok", "aria-hidden": "true", children: _jsx(Icon, { name: "check", size: 16 }) })] }), showConfirmError && _jsxs("span", { className: "auth-field-error", children: [_jsx(Icon, { name: "alert-triangle", size: 13 }), confirmError] })] })), mode === "register" && _jsxs("p", { className: "auth-verification-note", children: [_jsx(Icon, { name: "info", size: 15 }), _jsx("span", { children: t("authUnverifiedSignupNote") })] }), _jsxs("button", { className: "primary auth-submit", type: "submit", disabled: busy, children: [busy && _jsx("span", { className: "auth-spinner", "aria-hidden": "true" }), busy ? t("processing") : t(mode === "register" ? "createAccount" : "login")] })] }), msg && (_jsxs("div", { className: `auth-message ${msg.tone === "error" ? "is-error" : "is-success"}`, role: "status", "aria-live": "polite", children: [_jsx(Icon, { name: msg.tone === "error" ? "alert-triangle" : "check", size: 16 }), _jsx("span", { children: msg.text }), msg.code === "account_exists" && (_jsx("button", { type: "button", className: "link auth-msg-action", onClick: () => changeMode("login"), children: t("login") }))] })), _jsxs("small", { className: "auth-consent", children: [t("consent"), " ", _jsx("a", { href: "#terms", onClick: onClose, children: t("termsLink") }), " \u00B7 ", _jsx("a", { href: "#privacy", onClick: onClose, children: t("privacyLink") })] })] }) }));
 }
 export function LegacyPasswordSetup({ t, onDone }) {
     const [password, setPassword] = useState("");

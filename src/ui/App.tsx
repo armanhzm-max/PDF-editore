@@ -260,7 +260,7 @@ export default function App() {
       {me && me.passwordReady === false && <LegacyPasswordSetup t={t} onDone={() => { fetchMe().then((latest) => { if (latest) setMe(latest); }); }} />}
 
       {saveNotice && <div className="device-save-notice" role="status"><Icon name="folder-open" size={16}/><span>{saveNotice}</span><button type="button" onClick={() => setSaveNotice("")} aria-label={lang === "fa" ? "بستن پیام" : "Dismiss notice"}>×</button></div>}
-      {showAuth && !me && <div className="auth"><AuthForm t={t} mode={authMode} onModeChange={setAuthMode} onClose={() => setShowAuth(false)} onDone={() => { setShowAuth(false); fetchMe().then(setMe); }} /></div>}
+      {showAuth && !me && <AuthForm t={t} mode={authMode} onModeChange={setAuthMode} onClose={() => setShowAuth(false)} onDone={() => { setShowAuth(false); fetchMe().then(setMe); }} />}
 
       {tab === "tools" && <Hero t={t} onAbout={() => go("about")} />}
       <nav className="tabs" aria-label={t("navMain")}>

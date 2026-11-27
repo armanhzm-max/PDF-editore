@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, setToken, type Me } from "../core/permissions";
 import { Icon } from "./icons";
 import { getPlanLimits } from "../core/entitlements.js";
@@ -6,7 +6,31 @@ import { getPlanLimits } from "../core/entitlements.js";
 type T = (k: string) => string;
 const errMsg = (t: T, e: unknown) => t("err." + (e as Error).message);
 
+// Network failures surface as TypeError ("Failed to fetch"); unknown codes fall back to a friendly message.
+function humanError(t: T, error: unknown): string {
+  const code = error instanceof Error ? error.message : "";
+  if (error instanceof TypeError || /fetch|network/i.test(code)) return t("err.network_unreachable");
+  const mapped = t("err." + code);
+  return mapped !== "err." + code ? mapped : t("authGenericError");
+}
+
 export type AuthMode = "login" | "register";
+type Field = "email" | "password" | "confirm";
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const countChars = (value: string) => Array.from(value).length;
+const STRENGTH_KEYS = ["strengthWeak", "strengthWeak", "strengthFair", "strengthGood", "strengthStrong"] as const;
+
+// 0 = too short/empty · 4 = strongest. Guidance only; the server keeps enforcing 12–128 characters.
+function passwordScore(value: string): number {
+  const length = countChars(value);
+  if (!value || length < 12) return 0;
+  let score = 1;
+  if (/[a-z]/.test(value) && /[A-Z]/.test(value)) score += 1;
+  if (/\d/.test(value)) score += 1;
+  if (/[^\w\s]/.test(value) || length >= 16) score += 1;
+  return Math.min(score, 4);
+}
 
 export function AuthForm({
   t,
@@ -26,89 +50,196 @@ export function AuthForm({
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
-  const validEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim());
-  const validPassword = Array.from(password).length >= 12 && Array.from(password).length <= 128;
+  const [submitted, setSubmitted] = useState(false);
+  const [touched, setTouched] = useState<Partial<Record<Field, boolean>>>({});
+  const [capsLock, setCapsLock] = useState(false);
+  const [msg, setMsg] = useState<{ tone: "error" | "success"; text: string; code?: string } | null>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const cardRef = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  const emailValue = email.trim();
+  const emailError = !emailValue ? t("authEmailRequired") : !EMAIL_PATTERN.test(emailValue) ? t("authInvalidEmail") : "";
+  const passwordLength = countChars(password);
+  const passwordError = !password ? t("passwordRequired") : passwordLength < 12 ? t("passwordTooShort") : passwordLength > 128 ? t("passwordTooLong") : "";
+  const confirmError = password !== confirmPassword ? t("passwordMismatch") : "";
+  const showEmailError = (submitted || touched.email) && !!emailError;
+  const showPasswordError = (submitted || touched.password) && !!passwordError;
+  const showConfirmError = (submitted || touched.confirm) && !!confirmError;
+  const formValid = !emailError && !passwordError && (mode !== "register" || !confirmError);
+  const strength = passwordScore(password);
+
+  // ESC closes the dialog, Tab stays inside it, and background scrolling is locked while open.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { closeRef.current(); return; }
+      if (event.key !== "Tab") return;
+      const root = cardRef.current;
+      if (!root) return;
+      const focusable = Array.from(root.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), a[href], [tabindex]:not([tabindex='-1'])"))
+        .filter((element) => element.offsetParent !== null || element === document.activeElement);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (!active || !root.contains(active)) { event.preventDefault(); first.focus(); return; }
+      if (event.shiftKey && active === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && active === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener("keydown", onKey);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = previousOverflow; };
+  }, []);
+
+  function markTouched(field: Field) { setTouched((current) => ({ ...current, [field]: true })); }
 
   function changeMode(next: AuthMode) {
+    if (next === mode || busy) return;
     onModeChange(next);
     setPassword("");
     setConfirmPassword("");
-    setMsg("");
+    setShowPassword(false);
+    setCapsLock(false);
+    setMsg(null);
+    setSubmitted(false);
+    setTouched({});
   }
 
   async function submit() {
-    if (!validEmail || !validPassword || busy) return;
-    if (mode === "register" && password !== confirmPassword) {
-      setMsg(t("passwordMismatch"));
+    if (busy) return;
+    setSubmitted(true);
+    if (!formValid) {
+      setMsg(null);
+      if (emailError) emailRef.current?.focus();
+      else passwordRef.current?.focus();
       return;
     }
     setBusy(true);
-    setMsg("");
+    setMsg(null);
     try {
       const path = mode === "register" ? "/api/auth/register" : "/api/auth/login";
-      const result = await api<{ token: string }>(path, { email: email.trim().toLowerCase(), password });
+      const result = await api<{ token: string }>(path, { email: emailValue.toLowerCase(), password });
       setToken(result.token);
       onDone();
     } catch (error) {
-      setMsg(errMsg(t, error));
+      const code = error instanceof Error ? error.message : "";
+      setMsg({ tone: "error", text: humanError(t, error), code });
+      if (code === "invalid_credentials") {
+        setPassword("");
+        setConfirmPassword("");
+        window.setTimeout(() => passwordRef.current?.focus(), 0);
+      }
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <section className="auth-card" aria-labelledby="auth-title">
-      <div className="auth-card-heading">
-        <div>
+    <div className="auth-overlay" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="auth-card" role="dialog" aria-modal="true" aria-labelledby="auth-title" ref={cardRef}
+        onClick={(event) => event.stopPropagation()}>
+        <button type="button" className="auth-close" onClick={onClose} aria-label={t("close")} title={t("close")}>×</button>
+
+        <header className="auth-card-heading">
+          <span className="auth-brand" aria-hidden="true"><img src="/favicon.svg" alt="" width="26" height="26" /></span>
           <h2 id="auth-title">{t(mode === "register" ? "authRegisterTitle" : "authLoginTitle")}</h2>
           <p>{t(mode === "register" ? "authRegisterHint" : "authLoginHint")}</p>
+        </header>
+
+        <div className="auth-tabs" role="tablist" aria-label={t("authTabsLabel")}>
+          <button type="button" role="tab" id="auth-tab-login" aria-controls="auth-panel"
+            aria-selected={mode === "login"} className={mode === "login" ? "active" : ""}
+            onClick={() => changeMode("login")} disabled={busy}>{t("login")}</button>
+          <button type="button" role="tab" id="auth-tab-register" aria-controls="auth-panel"
+            aria-selected={mode === "register"} className={mode === "register" ? "active" : ""}
+            onClick={() => changeMode("register")} disabled={busy}>{t("createAccount")}</button>
         </div>
-        <button type="button" className="auth-close" onClick={onClose} aria-label={t("close")}>×</button>
-      </div>
 
-      <form className="auth-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-        <label className="field">
-          <span>{t("email")}</span>
-          <input type="email" name="email" autoComplete="email" maxLength={120}
-            placeholder={t("email")} value={email} onChange={(event) => setEmail(event.target.value)}
-            dir="ltr" required disabled={busy}/>
-        </label>
-        <label className="field">
-          <span>{t("password")}</span>
-          <input type={showPassword ? "text" : "password"} name="password"
-            autoComplete={mode === "register" ? "new-password" : "current-password"}
-            minLength={12} maxLength={128} value={password}
-            onChange={(event) => setPassword(event.target.value)} dir="ltr" required disabled={busy}/>
-        </label>
-        {mode === "register" && <label className="field">
-          <span>{t("confirmPassword")}</span>
-          <input type={showPassword ? "text" : "password"} name="confirm-password"
-            autoComplete="new-password" minLength={12} maxLength={128} value={confirmPassword}
-            onChange={(event) => setConfirmPassword(event.target.value)} dir="ltr" required disabled={busy}/>
-        </label>}
-        <button type="button" className="link auth-password-toggle" onClick={() => setShowPassword((value) => !value)} disabled={busy}>
-          {t(showPassword ? "hidePassword" : "showPassword")}
-        </button>
-        {mode === "register" && <p className="auth-verification-note">{t("authUnverifiedSignupNote")}</p>}
-        <button className="primary" type="submit" disabled={busy || !validEmail || !validPassword || (mode === "register" && password !== confirmPassword)}>
-          {busy ? t("processing") : t(mode === "register" ? "createAccount" : "login")}
-        </button>
-      </form>
+        <form id="auth-panel" className="auth-form" role="tabpanel"
+          aria-labelledby={mode === "login" ? "auth-tab-login" : "auth-tab-register"}
+          noValidate onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+          <label className="field auth-field" data-invalid={showEmailError || undefined}>
+            <span className="auth-field-label">{t("email")}</span>
+            <span className="auth-input-wrap">
+              <span className="auth-input-icon" aria-hidden="true"><Icon name="mail" size={17} /></span>
+              <input ref={emailRef} type="email" name="email" autoComplete="email" maxLength={120}
+                placeholder="name@example.com" value={email} autoFocus disabled={busy} dir="ltr" required
+                aria-invalid={showEmailError || undefined}
+                onChange={(event) => { setEmail(event.target.value); setMsg(null); }}
+                onBlur={() => markTouched("email")} />
+            </span>
+            {showEmailError && <span className="auth-field-error"><Icon name="alert-triangle" size={13} />{emailError}</span>}
+          </label>
 
-      {msg && <p className="auth-message" role="status" aria-live="polite">{msg}</p>}
+          <label className="field auth-field" data-invalid={showPasswordError || undefined}>
+            <span className="auth-field-label">{t("password")}</span>
+            <span className="auth-input-wrap">
+              <span className="auth-input-icon" aria-hidden="true"><Icon name="lock" size={17} /></span>
+              <input ref={passwordRef} type={showPassword ? "text" : "password"} name="password"
+                autoComplete={mode === "register" ? "new-password" : "current-password"}
+                minLength={12} maxLength={128} value={password} dir="ltr" disabled={busy} required
+                aria-invalid={showPasswordError || undefined}
+                onChange={(event) => { setPassword(event.target.value); setMsg(null); }}
+                onKeyUp={(event) => setCapsLock(event.getModifierState("CapsLock"))}
+                onBlur={() => { markTouched("password"); setCapsLock(false); }} />
+              <button type="button" className="auth-eye" onClick={() => setShowPassword((value) => !value)} disabled={busy}
+                aria-label={t(showPassword ? "hidePassword" : "showPassword")} title={t(showPassword ? "hidePassword" : "showPassword")}>
+                <Icon name={showPassword ? "eye-off" : "eye"} size={17} />
+              </button>
+            </span>
+            {capsLock && <span className="auth-caps"><Icon name="alert-triangle" size={13} />{t("capsLockOn")}</span>}
+            {mode === "register" && <span className="auth-hint">{t("passwordRequirement")}</span>}
+            {showPasswordError && <span className="auth-field-error"><Icon name="alert-triangle" size={13} />{passwordError}</span>}
+          </label>
 
-      <div className="auth-mode-switch">
-        {mode === "register" ? <>
-          <span>{t("haveAccount")}</span>
-          <button type="button" className="link" onClick={() => changeMode("login")}>{t("login")}</button>
-        </> : <>
-          <span>{t("noAccount")}</span>
-          <button type="button" className="link" onClick={() => changeMode("register")}>{t("createAccount")}</button>
-        </>}
-      </div>
-      <small className="muted">{t("consent")} <a href="#terms">{t("termsLink")}</a> · <a href="#privacy">{t("privacyLink")}</a></small>
-    </section>
+          {mode === "register" && password && (
+            <div className="auth-strength" data-level={strength}>
+              <div className="auth-strength-bars" aria-hidden="true"><i /><i /><i /><i /></div>
+              <span className="auth-strength-label">{t("passwordStrength")}: <strong>{t(STRENGTH_KEYS[strength])}</strong></span>
+            </div>
+          )}
+
+          {mode === "register" && (
+            <label className="field auth-field" data-invalid={showConfirmError || undefined}>
+              <span className="auth-field-label">{t("confirmPassword")}</span>
+              <span className="auth-input-wrap">
+                <span className="auth-input-icon" aria-hidden="true"><Icon name="lock" size={17} /></span>
+                <input type={showPassword ? "text" : "password"} name="confirm-password"
+                  autoComplete="new-password" minLength={12} maxLength={128} value={confirmPassword}
+                  dir="ltr" disabled={busy} required
+                  aria-invalid={showConfirmError || undefined}
+                  onChange={(event) => { setConfirmPassword(event.target.value); setMsg(null); }}
+                  onBlur={() => markTouched("confirm")} />
+                {confirmPassword && !confirmError && <span className="auth-input-ok" aria-hidden="true"><Icon name="check" size={16} /></span>}
+              </span>
+              {showConfirmError && <span className="auth-field-error"><Icon name="alert-triangle" size={13} />{confirmError}</span>}
+            </label>
+          )}
+
+          {mode === "register" && <p className="auth-verification-note"><Icon name="info" size={15} /><span>{t("authUnverifiedSignupNote")}</span></p>}
+
+          <button className="primary auth-submit" type="submit" disabled={busy}>
+            {busy && <span className="auth-spinner" aria-hidden="true" />}
+            {busy ? t("processing") : t(mode === "register" ? "createAccount" : "login")}
+          </button>
+        </form>
+
+        {msg && (
+          <div className={`auth-message ${msg.tone === "error" ? "is-error" : "is-success"}`} role="status" aria-live="polite">
+            <Icon name={msg.tone === "error" ? "alert-triangle" : "check"} size={16} />
+            <span>{msg.text}</span>
+            {msg.code === "account_exists" && (
+              <button type="button" className="link auth-msg-action" onClick={() => changeMode("login")}>{t("login")}</button>
+            )}
+          </div>
+        )}
+
+        <small className="auth-consent">{t("consent")} <a href="#terms" onClick={onClose}>{t("termsLink")}</a> · <a href="#privacy" onClick={onClose}>{t("privacyLink")}</a></small>
+      </section>
+    </div>
   );
 }
 

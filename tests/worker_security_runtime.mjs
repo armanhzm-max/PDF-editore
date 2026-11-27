@@ -25,9 +25,15 @@ await fs.writeFile(runtimePath, runtimeSource, 'utf8');
 
 const secret = 'security-runtime-test-secret-with-at-least-32-characters';
 const users = new Map([
-  ['user-a', { id: 'user-a', email: 'a@example.invalid', plan_until: 0, stripe_customer: null, stripe_subscription: null, stripe_plan_until: 0, zarinpal_plan_until: 0 }],
-  ['user-b', { id: 'user-b', email: 'b@example.invalid', plan_until: 0, stripe_customer: null, stripe_subscription: null, stripe_plan_until: 0, zarinpal_plan_until: 0 }],
+  // Verified accounts: billing endpoints require proven email ownership before any provider call.
+  ['user-a', { id: 'user-a', email: 'a@example.invalid', plan_until: 0, stripe_customer: null, stripe_subscription: null, stripe_plan_until: 0, zarinpal_plan_until: 0, email_verified_at: 1_700_000_000 }],
+  ['user-b', { id: 'user-b', email: 'b@example.invalid', plan_until: 0, stripe_customer: null, stripe_subscription: null, stripe_plan_until: 0, zarinpal_plan_until: 0, email_verified_at: 1_700_000_000 }],
 ]);
+// Legacy passwordless accounts (verified email, no password): the only identities the
+// retained OTP endpoints recognize — they can never create accounts for new addresses.
+const legacyFixture = (id, email) => [id, { id, email, plan_until: 0, stripe_customer: null, stripe_subscription: null, stripe_plan_until: 0, zarinpal_plan_until: 0, password_hash: null, email_verified_at: 1_700_000_000 }];
+users.set(...legacyFixture('legacy-signin', 'legacy-signin@example.invalid'));
+for (let index = 0; index < 6; index += 1) users.set(...legacyFixture(`legacy-blocked-${index}`, `blocked-${index}@example.invalid`));
 class FakeStatement {
   constructor(db, sql) { this.db = db; this.sql = sql.toLowerCase(); this.args = []; }
   bind(...args) { this.args = args; return this; }
@@ -199,7 +205,7 @@ try {
 
   const authEnv = { ...env, RESEND_API_KEY: 'test-resend-secret', MAIL_FROM: 'PDF Tools <login@example.invalid>' };
   externalMode = 'resend';
-  const authEmail = 'new-user@example.invalid';
+  const authEmail = 'legacy-signin@example.invalid';
   const authRequestResponse = await worker.fetch(request('/api/auth/request', 'POST', null, {
     headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: authEmail }),
   }), authEnv);
@@ -209,11 +215,14 @@ try {
 
   const turnstileEnv = { ...authEnv, TURNSTILE_SECRET: 'test-turnstile-secret' };
   externalMode = 'turnstile-fail';
-  const invalidChallengeRequest = () => worker.fetch(request('/api/auth/request', 'POST', null, {
-    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'blocked@example.invalid', turnstile: 'invalid-test' }),
+  // Each attempt uses its own legacy address so only the per-IP bucket accumulates, and a
+  // dedicated test IP keeps this scenario isolated from the earlier successful request —
+  // proving the IP throttle trips locally on the sixth attempt before any CAPTCHA call.
+  const invalidChallengeRequest = (index) => worker.fetch(request('/api/auth/request', 'POST', null, {
+    headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '198.51.100.8' }, body: JSON.stringify({ email: `blocked-${index}@example.invalid`, turnstile: 'invalid-test' }),
   }), turnstileEnv);
   const invalidChallengeResponses = [];
-  for (let index = 0; index < 6; index += 1) invalidChallengeResponses.push(await invalidChallengeRequest());
+  for (let index = 0; index < 6; index += 1) invalidChallengeResponses.push(await invalidChallengeRequest(index));
   assert.equal(invalidChallengeResponses.slice(0, 5).every((response) => response.status === 400), true);
   assert.equal(invalidChallengeResponses[5].status, 429, 'local IP/email limits must block before another Turnstile provider call');
   assert.equal(turnstileCalls, 5, 'the external CAPTCHA provider is not called after local throttling blocks the request');
