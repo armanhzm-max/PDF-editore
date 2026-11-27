@@ -1,5 +1,5 @@
 const CACHE_PREFIX = "pdf-ai-shell-";
-const CACHE_NAME = `${CACHE_PREFIX}v2`;
+const CACHE_NAME = `${CACHE_PREFIX}v3`;
 const APP_SHELL = ["/", "/manifest.webmanifest", "/favicon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -19,6 +19,9 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== "GET" || url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
+  // Dev-server modules are rewritten in place at stable URLs; caching them lets a stale
+  // shell mix old and fresh modules after an edit. Production assets live under /assets/.
+  if (url.pathname.startsWith("/src/") || url.pathname.startsWith("/@")) return;
 
   if (request.mode === "navigate") {
     event.respondWith((async () => {
